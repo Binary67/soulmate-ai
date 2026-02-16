@@ -19,6 +19,9 @@ if str(SRC_ROOT) not in sys.path:
 
 from Agents.FriendAgent import build_friend_agent  # noqa: E402
 from Personalization.MemoryStore import MemoryStore  # noqa: E402
+from Personalization.PromptBuilder import (  # noqa: E402
+    build_personalized_system_prompt,
+)
 
 load_dotenv(override=True)
 
@@ -49,6 +52,13 @@ async def _get_recent_context_messages(user_id: int) -> list[dict[str, str]]:
     async with _get_user_lock(user_id):
         return await asyncio.to_thread(
             memory_store.get_recent_context_messages, str(user_id)
+        )
+
+
+async def _load_personalization_profile(user_id: int) -> dict:
+    async with _get_user_lock(user_id):
+        return await asyncio.to_thread(
+            memory_store.load_personalization_profile, str(user_id)
         )
 
 
@@ -85,8 +95,12 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("Your conversation has been reset.")
 
 
-async def _run_agent(messages: list[dict[str, str]]) -> str:
-    return await asyncio.to_thread(agent.invoke, {"messages": messages})
+async def _run_agent(
+    messages: list[dict[str, str]], system_prompt: str | None = None
+) -> str:
+    return await asyncio.to_thread(
+        agent.invoke, {"messages": messages}, system_prompt=system_prompt
+    )
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -104,12 +118,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await _append_message(user.id, "user", text)
     recent_context = await _get_recent_context_messages(user.id)
+    personalization_profile = await _load_personalization_profile(user.id)
+    system_prompt = build_personalized_system_prompt(
+        agent.base_system_prompt, personalization_profile
+    )
 
     try:
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id, action=ChatAction.TYPING
         )
-        response_text = await _run_agent(recent_context)
+        response_text = await _run_agent(
+            recent_context, system_prompt=system_prompt
+        )
     except Exception:
         await update.message.reply_text(
             "Sorry, I hit an error generating a response. Please try again."

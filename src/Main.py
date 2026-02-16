@@ -4,6 +4,7 @@ from pathlib import Path
 
 from Agents.FriendAgent import build_friend_agent
 from Personalization.MemoryStore import MemoryStore
+from Personalization.PromptBuilder import build_personalized_system_prompt
 
 
 def main() -> None:
@@ -14,7 +15,13 @@ def main() -> None:
     query = "I perfer to be have food while feeling lonely."
     memory_store.append_message(user_id, "user", query)
     recent_context = memory_store.get_recent_context_messages(user_id)
-    response_text = agent.invoke({"messages": recent_context})
+    personalization_profile = memory_store.load_personalization_profile(user_id)
+    system_prompt = build_personalized_system_prompt(
+        agent.base_system_prompt, personalization_profile
+    )
+    response_text = agent.invoke(
+        {"messages": recent_context}, system_prompt=system_prompt
+    )
 
     if response_text:
         memory_store.append_message(user_id, "assistant", response_text)

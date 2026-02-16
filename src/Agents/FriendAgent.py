@@ -15,10 +15,19 @@ FRIEND_SYSTEM_PROMPT = (
 
 class FriendAgent:
     def __init__(self) -> None:
-        self._agent = build_agent(system_prompt=FRIEND_SYSTEM_PROMPT)
+        self._base_system_prompt = FRIEND_SYSTEM_PROMPT
+        self._agent = build_agent(system_prompt=self._base_system_prompt)
 
-    def invoke(self, payload: dict[str, Any]) -> str:
-        result = self._agent.invoke(payload)
+    @property
+    def base_system_prompt(self) -> str:
+        return self._base_system_prompt
+
+    def invoke(self, payload: dict[str, Any], *, system_prompt: str | None = None) -> str:
+        resolved_prompt = system_prompt or self._base_system_prompt
+        if resolved_prompt == self._base_system_prompt:
+            result = self._agent.invoke(payload)
+        else:
+            result = build_agent(system_prompt=resolved_prompt).invoke(payload)
         return extract_response_text(result)
 
 
