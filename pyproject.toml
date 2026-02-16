@@ -9,5 +9,6 @@ dependencies = [
     "langchain-openai>=1.1.9",
     "langgraph>=1.0.8",
     "openai>=2.21.0",
+    "python-telegram-bot>=20.8",
     "python-dotenv>=1.2.1",
 ]
