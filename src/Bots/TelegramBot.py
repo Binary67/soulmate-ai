@@ -45,24 +45,26 @@ async def _append_message(user_id: int, role: str, content: str) -> None:
         )
 
 
-async def _get_context_messages(user_id: int) -> list[dict[str, str]]:
+async def _get_recent_context_messages(user_id: int) -> list[dict[str, str]]:
     async with _get_user_lock(user_id):
-        return await asyncio.to_thread(memory_store.get_context_messages, str(user_id))
+        return await asyncio.to_thread(
+            memory_store.get_recent_context_messages, str(user_id)
+        )
 
 
-async def _reset_short_term(user_id: int) -> None:
+async def _reset_recent_context(user_id: int) -> None:
     async with _get_user_lock(user_id):
-        await asyncio.to_thread(memory_store.reset_short_term, str(user_id))
+        await asyncio.to_thread(memory_store.reset_recent_context, str(user_id))
 
 
-async def _update_long_term_if_needed(user_id: int) -> None:
+async def _update_personalization_profile_if_needed(user_id: int) -> None:
     try:
         async with _get_user_lock(user_id):
             await asyncio.to_thread(
-                memory_store.update_long_term_if_needed, str(user_id)
+                memory_store.update_personalization_profile_if_needed, str(user_id)
             )
     except Exception:
-        print("Failed to update long-term memory summary.", file=sys.stderr)
+        print("Failed to update personalization profile summary.", file=sys.stderr)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -79,7 +81,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     if user is None:
         return
-    await _reset_short_term(user.id)
+    await _reset_recent_context(user.id)
     await update.message.reply_text("Your conversation has been reset.")
 
 
@@ -101,13 +103,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await _append_message(user.id, "user", text)
-    messages = await _get_context_messages(user.id)
+    recent_context = await _get_recent_context_messages(user.id)
 
     try:
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id, action=ChatAction.TYPING
         )
-        response_text = await _run_agent(messages)
+        response_text = await _run_agent(recent_context)
     except Exception:
         await update.message.reply_text(
             "Sorry, I hit an error generating a response. Please try again."
@@ -120,7 +122,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await _append_message(user.id, "assistant", response_text)
     await update.message.reply_text(response_text)
-    await _update_long_term_if_needed(user.id)
+    await _update_personalization_profile_if_needed(user.id)
 
 
 def main() -> None:

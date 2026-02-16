@@ -13,15 +13,15 @@ def main() -> None:
     agent = build_friend_agent()
     query = "I perfer to be have food while feeling lonely."
     memory_store.append_message(user_id, "user", query)
-    messages = memory_store.get_context_messages(user_id)
-    response_text = agent.invoke({"messages": messages})
+    recent_context = memory_store.get_recent_context_messages(user_id)
+    response_text = agent.invoke({"messages": recent_context})
 
     if response_text:
         memory_store.append_message(user_id, "assistant", response_text)
         try:
-            memory_store.update_long_term_if_needed(user_id)
+            memory_store.update_personalization_profile_if_needed(user_id)
         except Exception:
-            print("Failed to update long-term memory summary.")
+            print("Failed to update personalization profile summary.")
         print(response_text)
     else:
         print("No response received from the agent.")

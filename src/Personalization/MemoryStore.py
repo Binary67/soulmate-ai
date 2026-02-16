@@ -14,15 +14,15 @@ from Utils.AgentUtils import extract_message_text
 
 
 DEFAULT_MEMORY_DIR = "Memory"
-DEFAULT_SHORT_TERM_MAX_MESSAGES = 20
-DEFAULT_LONG_TERM_UPDATE_EVERY_USER_MESSAGES = 1
+DEFAULT_RECENT_CONTEXT_MAX_MESSAGES = 20
+DEFAULT_PERSONALIZATION_PROFILE_UPDATE_EVERY_USER_MESSAGES = 1
 DEFAULT_USER_ID = "cli"
 
-SHORT_TERM_DIR_NAME = "short_term"
-LONG_TERM_DIR_NAME = "long_term"
+RECENT_CONTEXT_DIR_NAME = "recent_context"
+PERSONALIZATION_PROFILE_DIR_NAME = "personalization_profile"
 
-SHORT_TERM_VERSION = 1
-LONG_TERM_VERSION = 1
+RECENT_CONTEXT_VERSION = 1
+PERSONALIZATION_PROFILE_VERSION = 1
 
 SUMMARY_SYSTEM_PROMPT = (
     "You update a user's long-term memory profile for a supportive chat agent. "
@@ -67,8 +67,8 @@ class MemoryStore:
         self,
         memory_dir: str | Path | None = None,
         *,
-        short_term_max_messages: int | None = None,
-        long_term_update_every_user_messages: int | None = None,
+        recent_context_max_messages: int | None = None,
+        personalization_profile_update_every_user_messages: int | None = None,
     ) -> None:
         resolved_dir = (
             Path(memory_dir)
@@ -76,24 +76,26 @@ class MemoryStore:
             else Path(os.getenv("MEMORY_DIR", DEFAULT_MEMORY_DIR))
         )
         self._memory_dir = resolved_dir
-        self._short_term_dir = self._memory_dir / SHORT_TERM_DIR_NAME
-        self._long_term_dir = self._memory_dir / LONG_TERM_DIR_NAME
-        self._short_term_dir.mkdir(parents=True, exist_ok=True)
-        self._long_term_dir.mkdir(parents=True, exist_ok=True)
+        self._recent_context_dir = self._memory_dir / RECENT_CONTEXT_DIR_NAME
+        self._personalization_profile_dir = (
+            self._memory_dir / PERSONALIZATION_PROFILE_DIR_NAME
+        )
+        self._recent_context_dir.mkdir(parents=True, exist_ok=True)
+        self._personalization_profile_dir.mkdir(parents=True, exist_ok=True)
 
-        self._short_term_max_messages = (
-            short_term_max_messages
-            if short_term_max_messages is not None
+        self._recent_context_max_messages = (
+            recent_context_max_messages
+            if recent_context_max_messages is not None
             else _get_env_int(
-                "MEMORY_SHORT_TERM_MAX_MESSAGES", DEFAULT_SHORT_TERM_MAX_MESSAGES
+                "MEMORY_SHORT_TERM_MAX_MESSAGES", DEFAULT_RECENT_CONTEXT_MAX_MESSAGES
             )
         )
-        self._long_term_update_every_user_messages = (
-            long_term_update_every_user_messages
-            if long_term_update_every_user_messages is not None
+        self._personalization_profile_update_every_user_messages = (
+            personalization_profile_update_every_user_messages
+            if personalization_profile_update_every_user_messages is not None
             else _get_env_int(
                 "MEMORY_LONG_TERM_UPDATE_EVERY_USER_MESSAGES",
-                DEFAULT_LONG_TERM_UPDATE_EVERY_USER_MESSAGES,
+                DEFAULT_PERSONALIZATION_PROFILE_UPDATE_EVERY_USER_MESSAGES,
             )
         )
         self._default_user_id = os.getenv("MEMORY_DEFAULT_USER_ID", DEFAULT_USER_ID)
@@ -102,12 +104,12 @@ class MemoryStore:
     def default_user_id(self) -> str:
         return self._safe_user_id(self._default_user_id) or DEFAULT_USER_ID
 
-    def get_context_messages(self, user_id: str) -> list[dict[str, str]]:
-        short_term = self.load_short_term(user_id)
-        messages = short_term.get("messages", [])
+    def get_recent_context_messages(self, user_id: str) -> list[dict[str, str]]:
+        recent_context = self.load_recent_context(user_id)
+        messages = recent_context.get("messages", [])
         if not isinstance(messages, list):
             return []
-        tail = messages[-self._short_term_max_messages :]
+        tail = messages[-self._recent_context_max_messages :]
         context: list[dict[str, str]] = []
         for message in tail:
             if not isinstance(message, dict):
@@ -120,11 +122,11 @@ class MemoryStore:
 
     def append_message(self, user_id: str, role: str, content: str) -> dict[str, Any]:
         resolved_user_id = self._safe_user_id(user_id)
-        short_term = self.load_short_term(resolved_user_id)
-        message_id = short_term.get("next_message_id", 1)
+        recent_context = self.load_recent_context(resolved_user_id)
+        message_id = recent_context.get("next_message_id", 1)
         if not isinstance(message_id, int) or message_id < 1:
             message_id = 1
-        short_term.setdefault("messages", []).append(
+        recent_context.setdefault("messages", []).append(
             {
                 "id": message_id,
                 "role": role,
@@ -132,50 +134,56 @@ class MemoryStore:
                 "timestamp": _utc_now_iso(),
             }
         )
-        short_term["next_message_id"] = message_id + 1
-        self.save_short_term(resolved_user_id, short_term)
-        return short_term
+        recent_context["next_message_id"] = message_id + 1
+        self.save_recent_context(resolved_user_id, recent_context)
+        return recent_context
 
-    def reset_short_term(self, user_id: str) -> None:
+    def reset_recent_context(self, user_id: str) -> None:
         resolved_user_id = self._safe_user_id(user_id)
-        short_term = self.load_short_term(resolved_user_id)
-        short_term["messages"] = []
-        self.save_short_term(resolved_user_id, short_term)
+        recent_context = self.load_recent_context(resolved_user_id)
+        recent_context["messages"] = []
+        self.save_recent_context(resolved_user_id, recent_context)
 
-    def load_short_term(self, user_id: str) -> dict[str, Any]:
+    def load_recent_context(self, user_id: str) -> dict[str, Any]:
         resolved_user_id = self._safe_user_id(user_id)
-        default_data = self._default_short_term(resolved_user_id)
-        data = self._read_json(self._short_term_path(resolved_user_id), default_data)
-        return self._normalize_short_term(resolved_user_id, data)
+        default_data = self._default_recent_context(resolved_user_id)
+        data = self._read_json(self._recent_context_path(resolved_user_id), default_data)
+        return self._normalize_recent_context(resolved_user_id, data)
 
-    def save_short_term(self, user_id: str, data: dict[str, Any]) -> None:
+    def save_recent_context(self, user_id: str, data: dict[str, Any]) -> None:
         resolved_user_id = self._safe_user_id(user_id)
-        normalized = self._normalize_short_term(resolved_user_id, data)
-        self._write_json(self._short_term_path(resolved_user_id), normalized)
+        normalized = self._normalize_recent_context(resolved_user_id, data)
+        self._write_json(self._recent_context_path(resolved_user_id), normalized)
 
-    def load_long_term(self, user_id: str) -> dict[str, Any]:
+    def load_personalization_profile(self, user_id: str) -> dict[str, Any]:
         resolved_user_id = self._safe_user_id(user_id)
-        default_data = self._default_long_term(resolved_user_id)
-        data = self._read_json(self._long_term_path(resolved_user_id), default_data)
-        return self._normalize_long_term(resolved_user_id, data)
+        default_data = self._default_personalization_profile(resolved_user_id)
+        data = self._read_json(
+            self._personalization_profile_path(resolved_user_id), default_data
+        )
+        return self._normalize_personalization_profile(resolved_user_id, data)
 
-    def save_long_term(self, user_id: str, data: dict[str, Any]) -> None:
+    def save_personalization_profile(self, user_id: str, data: dict[str, Any]) -> None:
         resolved_user_id = self._safe_user_id(user_id)
-        normalized = self._normalize_long_term(resolved_user_id, data)
-        self._write_json(self._long_term_path(resolved_user_id), normalized)
+        normalized = self._normalize_personalization_profile(resolved_user_id, data)
+        self._write_json(self._personalization_profile_path(resolved_user_id), normalized)
 
-    def update_long_term_if_needed(self, user_id: str, model: Any | None = None) -> bool:
+    def update_personalization_profile_if_needed(
+        self, user_id: str, model: Any | None = None
+    ) -> bool:
         resolved_user_id = self._safe_user_id(user_id)
-        short_term = self.load_short_term(resolved_user_id)
-        long_term = self.load_long_term(resolved_user_id)
+        recent_context = self.load_recent_context(resolved_user_id)
+        personalization_profile = self.load_personalization_profile(resolved_user_id)
 
-        last_summarized_id = long_term.get("last_summarized_message_id", 0)
+        last_summarized_id = personalization_profile.get(
+            "last_summarized_message_id", 0
+        )
         if not isinstance(last_summarized_id, int) or last_summarized_id < 0:
             last_summarized_id = 0
 
         new_messages = [
             message
-            for message in short_term.get("messages", [])
+            for message in recent_context.get("messages", [])
             if isinstance(message, dict)
             and isinstance(message.get("id"), int)
             and message["id"] > last_summarized_id
@@ -186,19 +194,26 @@ class MemoryStore:
         user_message_count = sum(
             1 for message in new_messages if message.get("role") == "user"
         )
-        if user_message_count < self._long_term_update_every_user_messages:
+        if (
+            user_message_count
+            < self._personalization_profile_update_every_user_messages
+        ):
             return False
 
-        summary_update = self._summarize_profile(long_term, new_messages, model)
+        summary_update = self._summarize_profile(
+            personalization_profile, new_messages, model
+        )
         if summary_update is None:
             return False
 
-        updated_profile = self._merge_profile(resolved_user_id, long_term, summary_update)
+        updated_profile = self._merge_profile(
+            resolved_user_id, personalization_profile, summary_update
+        )
         updated_profile["updated_at"] = _utc_now_iso()
         updated_profile["last_summarized_message_id"] = max(
             message.get("id", 0) for message in new_messages
         )
-        self.save_long_term(resolved_user_id, updated_profile)
+        self.save_personalization_profile(resolved_user_id, updated_profile)
         return True
 
     def _summarize_profile(
@@ -249,7 +264,7 @@ class MemoryStore:
     def _merge_profile(
         self, user_id: str, existing: dict[str, Any], update: dict[str, Any]
     ) -> dict[str, Any]:
-        merged = self._normalize_long_term(user_id, existing)
+        merged = self._normalize_personalization_profile(user_id, existing)
         for key in (
             "summary",
             "preferences",
@@ -322,8 +337,10 @@ class MemoryStore:
             return len(value) > 0
         return value is not None
 
-    def _normalize_short_term(self, user_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        normalized = self._default_short_term(user_id)
+    def _normalize_recent_context(
+        self, user_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        normalized = self._default_recent_context(user_id)
         if not isinstance(data, dict):
             return normalized
         messages = data.get("messages")
@@ -341,8 +358,10 @@ class MemoryStore:
             normalized["next_message_id"] = next_message_id
         return normalized
 
-    def _normalize_long_term(self, user_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        normalized = self._default_long_term(user_id)
+    def _normalize_personalization_profile(
+        self, user_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        normalized = self._default_personalization_profile(user_id)
         if not isinstance(data, dict):
             return normalized
         for key in (
@@ -368,17 +387,17 @@ class MemoryStore:
             normalized["last_summarized_message_id"] = last_summarized
         return normalized
 
-    def _default_short_term(self, user_id: str) -> dict[str, Any]:
+    def _default_recent_context(self, user_id: str) -> dict[str, Any]:
         return {
-            "version": SHORT_TERM_VERSION,
+            "version": RECENT_CONTEXT_VERSION,
             "user_id": user_id,
             "next_message_id": 1,
             "messages": [],
         }
 
-    def _default_long_term(self, user_id: str) -> dict[str, Any]:
+    def _default_personalization_profile(self, user_id: str) -> dict[str, Any]:
         return {
-            "version": LONG_TERM_VERSION,
+            "version": PERSONALIZATION_PROFILE_VERSION,
             "user_id": user_id,
             "updated_at": "",
             "last_summarized_message_id": 0,
@@ -390,11 +409,11 @@ class MemoryStore:
             "notes": [],
         }
 
-    def _short_term_path(self, user_id: str) -> Path:
-        return self._short_term_dir / f"{user_id}.json"
+    def _recent_context_path(self, user_id: str) -> Path:
+        return self._recent_context_dir / f"{user_id}.json"
 
-    def _long_term_path(self, user_id: str) -> Path:
-        return self._long_term_dir / f"{user_id}.json"
+    def _personalization_profile_path(self, user_id: str) -> Path:
+        return self._personalization_profile_dir / f"{user_id}.json"
 
     def _read_json(self, path: Path, default: dict[str, Any]) -> dict[str, Any]:
         if not path.exists():
