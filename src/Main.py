@@ -12,7 +12,10 @@ def main() -> None:
     memory_store = MemoryStore(memory_dir=project_root / "Memory")
     user_id = memory_store.default_user_id
     agent = build_friend_agent()
-    query = "I perfer to be have food while feeling lonely."
+    query = input("You: ").strip()
+    if not query:
+        print("No input provided.")
+        return
     memory_store.append_message(user_id, "user", query)
     recent_context = memory_store.get_recent_context_messages(user_id)
     personalization_profile = memory_store.load_personalization_profile(user_id)
