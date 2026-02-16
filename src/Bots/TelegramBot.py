@@ -18,11 +18,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from Agents.FriendAgent import build_friend_agent  # noqa: E402
+from Personalization.MemoryStore import MemoryStore  # noqa: E402
 
 load_dotenv(override=True)
-
-MAX_HISTORY_MESSAGES = 20  # 10 user/assistant turns
-
 
 def _get_required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
@@ -31,30 +29,40 @@ def _get_required_env(name: str) -> str:
     return value
 
 
-class InMemoryHistory:
-    def __init__(self) -> None:
-        self._history: dict[int, list[dict[str, str]]] = defaultdict(list)
-        self._lock = asyncio.Lock()
-
-    async def append(self, user_id: int, role: str, content: str) -> None:
-        async with self._lock:
-            messages = self._history[user_id]
-            messages.append({"role": role, "content": content})
-            if len(messages) > MAX_HISTORY_MESSAGES:
-                overflow = len(messages) - MAX_HISTORY_MESSAGES
-                del messages[:overflow]
-
-    async def get(self, user_id: int) -> list[dict[str, str]]:
-        async with self._lock:
-            return list(self._history[user_id])
-
-    async def reset(self, user_id: int) -> None:
-        async with self._lock:
-            self._history[user_id] = []
-
-
-history_store = InMemoryHistory()
+memory_store = MemoryStore(memory_dir=PROJECT_ROOT / "Memory")
+user_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 agent = build_friend_agent()
+
+
+def _get_user_lock(user_id: int) -> asyncio.Lock:
+    return user_locks[user_id]
+
+
+async def _append_message(user_id: int, role: str, content: str) -> None:
+    async with _get_user_lock(user_id):
+        await asyncio.to_thread(
+            memory_store.append_message, str(user_id), role, content
+        )
+
+
+async def _get_context_messages(user_id: int) -> list[dict[str, str]]:
+    async with _get_user_lock(user_id):
+        return await asyncio.to_thread(memory_store.get_context_messages, str(user_id))
+
+
+async def _reset_short_term(user_id: int) -> None:
+    async with _get_user_lock(user_id):
+        await asyncio.to_thread(memory_store.reset_short_term, str(user_id))
+
+
+async def _update_long_term_if_needed(user_id: int) -> None:
+    try:
+        async with _get_user_lock(user_id):
+            await asyncio.to_thread(
+                memory_store.update_long_term_if_needed, str(user_id)
+            )
+    except Exception:
+        print("Failed to update long-term memory summary.", file=sys.stderr)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -71,7 +79,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     if user is None:
         return
-    await history_store.reset(user.id)
+    await _reset_short_term(user.id)
     await update.message.reply_text("Your conversation has been reset.")
 
 
@@ -92,8 +100,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("I can only read text messages for now.")
         return
 
-    await history_store.append(user.id, "user", text)
-    messages = await history_store.get(user.id)
+    await _append_message(user.id, "user", text)
+    messages = await _get_context_messages(user.id)
 
     try:
         await context.bot.send_chat_action(
@@ -110,8 +118,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Sorry, I did not get a response. Try again?")
         return
 
-    await history_store.append(user.id, "assistant", response_text)
+    await _append_message(user.id, "assistant", response_text)
     await update.message.reply_text(response_text)
+    await _update_long_term_if_needed(user.id)
 
 
 def main() -> None:
