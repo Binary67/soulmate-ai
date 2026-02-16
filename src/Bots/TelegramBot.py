@@ -5,7 +5,6 @@ import os
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -30,20 +29,6 @@ def _get_required_env(name: str) -> str:
     if not value:
         raise ValueError(f"Missing required environment variable: {name}")
     return value
-
-
-def _extract_message_text(message: Any) -> str:
-    if message is None:
-        return ""
-
-    if hasattr(message, "content"):
-        return message.content
-
-    if isinstance(message, dict):
-        content = message.get("content")
-        return content if isinstance(content, str) else ""
-
-    return str(message)
 
 
 class InMemoryHistory:
@@ -91,10 +76,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _run_agent(messages: list[dict[str, str]]) -> str:
-    result = await asyncio.to_thread(agent.invoke, {"messages": messages})
-    response_messages = result.get("messages", [])
-    last_message = response_messages[-1] if response_messages else None
-    return _extract_message_text(last_message)
+    return await asyncio.to_thread(agent.invoke, {"messages": messages})
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
